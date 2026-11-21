@@ -1,13 +1,22 @@
 import asyncio
 from fastapi import FastAPI, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 app = FastAPI(title="Task Manager")
+
+MAX_TASKS = 100
 
 
 class TaskCreate(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     description: str = Field(default="", max_length=2000)
+
+    @field_validator("title")
+    @classmethod
+    def title_not_start_with_space(cls, v: str) -> str:
+        if v.startswith(" "):
+            raise ValueError("title must not start with a space")
+        return v
 
 
 class Task(BaseModel):
@@ -15,6 +24,7 @@ class Task(BaseModel):
     title: str
     description: str
     done: bool = False
+
 
 class TaskUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=200)
@@ -34,6 +44,11 @@ async def health():
 @app.post("/tasks", response_model=Task)
 async def create_task(payload: TaskCreate):
     global next_id
+    if len(tasks) >= MAX_TASKS:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"task limit reached (max {MAX_TASKS})",
+        )
     task = Task(
         id=next_id,
         title=payload.title,
@@ -46,7 +61,9 @@ async def create_task(payload: TaskCreate):
 
 
 @app.get("/tasks", response_model=list[Task])
-async def list_tasks():
+async def list_tasks(done_only: bool = False):
+    if done_only:
+        return [t for t in tasks.values() if t.done]
     return list(tasks.values())
 
 
@@ -76,6 +93,7 @@ async def delete_task(task_id: int):
         raise HTTPException(status_code=404, detail="task not found")
     del tasks[task_id]
     return None
+
 
 @app.get("/slow")
 async def slow_endpoint():
